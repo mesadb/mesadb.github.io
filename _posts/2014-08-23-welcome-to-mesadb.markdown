@@ -9,7 +9,7 @@ Google's Mesa is a highly scalable analytic data warehousing system that stores 
 
 Our open source project - MesaDB, is inspired by Mesa. We are planning to build a simple, mesa-like database.
 
-You can visit [Mesa.pdf](Mesa.pdf).
+You can visit [Mesa.pdf](http://mesadb.com/upload/Mesa.pdf).
 
 [jekyll-gh]: https://github.com/jekyll/jekyll
 [jekyll]:    http://jekyllrb.com
