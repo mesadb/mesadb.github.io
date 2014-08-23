@@ -1,11 +1,11 @@
 # Site settings
-title: Your awesome title
-email: your-email@domain.com
-description: "Write an awesome description for your new site here. You can edit this line in _config.yml. It will appear in your document head meta (for Google search results) and in your feed.xml site description."
+title: Geo-Replicated, Near Real-Time, Scalable Database
+email: openmesadb@gmail.com
+description: "MesaDB is inspired by Mesa of Google, it's a Geo-Replicated, Near Real-Time, Scalable Data Warehousing."
 baseurl: ""
-url: "http://yourdomain.com"
-twitter_username: jekyllrb
-github_username:  jekyll
+url: "http://mesadb.com"
+twitter_username: quickbundle
+github_username:  mesadb
 
 # Build settings
 markdown: kramdown
