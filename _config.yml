@@ -4,7 +4,7 @@ email: openmesadb@gmail.com
 description: "MesaDB is inspired by Mesa of Google, it's a Geo-Replicated, Near Real-Time, Scalable Data Warehousing."
 baseurl: ""
 url: "http://mesadb.com"
-twitter_username: quickbundle
+twitter_username: openmesadb
 github_username:  mesadb
 
 # Build settings
