@@ -1,9 +1,5 @@
-name: inverse
-layout: true
-class: center, middle, inverse
-
 ---
-#MesaDB - Open Source DB Engine from China
+#Mesa: Geo-Replicated, Near Real-Time, Scalable Data Warehousing
 .footnote[Go to directly to [project site](http://mesadb.com)]
 
 ---
