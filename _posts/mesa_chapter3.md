@@ -16,8 +16,9 @@ Mesa 使用 Google 内部通用的基础设施和服务构建而来, 其中包�
 每个 Mesa 实例由2个子系统构成: 更新/维护和查询.这些子系统是完全松耦合的,允许它们独立扩展.所有的持久化元数据保存在BigTable中,所有的数据文件保存在Colossus中.在数据校正方面,2个子系统中之间没有直接的交互.
 
 ####3.1.1 更新/维护子系统
-更新和维护子系统执行相关操作来保障本地 Mesa 实例的数据正确性,及时更新和查询的优化.它运行着各种背景操作,例如加载更新,表压缩,Schema变更,以及表的校验和.上述操作都通过称为controller/worker的框架管理和执行,如图4所示.
-![Figure4:Mesa’s controller/worker framework](upload/mesa_figure_4.png)
+
+更新和维护子系统执行相关操作来保障本地 Mesa 实例的数据正确性,及时更新和查询的优化.它运行着各种背景操作,例如加载更新,表压缩,Schema变更,以及表的校验和.上述操作都通过称为controller/worker的框架管理和执行,如图4所示.
+![Figure4:Mesa’s controller/worker framework](../upload/mesa_figure_4.png)
 
 
 
@@ -49,7 +50,7 @@ Mesa被部署到多个数据中心用于提供高可靠保障.每个实例都是
 ####3.2.1 一致性更新机制
 
 在 Mesa 中的所有表都是多版本控制的,因此当新的数据更新被处理时,Mesa能够从上一个状态持续提供一致性的数据.一个上游系统以批量的方式生成更新数据,每个几分钟.详情如图6所示,Mesa的提交器负责协调跨多个数据中心的更新,一次一个版本.提交器指定使用新的版本号指定每个批处理更新,同时发布所有与更新绑定的元数据(包含更新数据的文件位置)到版本数据库,它是构建在Paxos [35]一致性算法之上的全局同步和一致性数据存储.提交器自身是无状态的,与运行在多个数据中心内的实例一同保障高可靠性. 
-![Figure6:Mesa’s controller/worker framework](upload/mesa_figure_6.png)
+![Figure6:Mesa’s controller/worker framework](../upload/mesa_figure_6.png)
 
 
 
