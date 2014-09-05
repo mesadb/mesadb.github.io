@@ -1,0 +1,7 @@
+#Mesa: Geo-Replicated, Near Real-Time, Scalable Data Warehousing
+原论文请到Google官网下载[http://static.googleusercontent.com/media/research.google.com/zh-CN/us/pubs/archive/42851.pdf]
+
+---
+  第3章 Mesa 系统架构
+
+Mesa 使用 Google 内部通用的基础设施和服务构建而来, 其中包括 BigTable [12] 和 Colossus [22, 23]. Mesa 运行在多个数据中心内, 每一个都运行着一个单独实例. 我们从介绍实例的设计开始详解 Mesa 整体结构. 然后,我们讨论这些实例怎样整合在一起,形成多数据中心部署架构.
