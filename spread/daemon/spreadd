@@ -166,7 +166,7 @@ case "$1" in
 	if [ $RETVAL -ne 0 ] && [ $RETVAL -ne 3 ] ; then
 	    echo "Try using 'spreadd stop' to clear state"
 	elif [ $RETVAL -eq 3 ] ; then
-	    echo "If you are having trouble starting spread, check /opt/vertica/config/vspread.conf"
+	    echo "If you are having trouble starting spread, check /opt/mesadb/config/vspread.conf"
 	    echo "and spread logs in /tmp/spread_* and /var/log/spreadd.log"
 	fi
         ;;
