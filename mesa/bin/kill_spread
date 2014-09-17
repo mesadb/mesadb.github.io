@@ -1,0 +1,114 @@
+#!/opt/vertica/oss/python/bin/python
+
+import subprocess
+import time
+import sys
+import os.path
+import re
+
+def get_spread_port(confpath):
+    with open(os.path.join(confpath),'r') as f:
+        vspread = f.read()
+        # pick out information
+        segs = re.findall(r"^Spread_Segment\s+([0-9.]+):([0-9]+)",vspread,re.S|re.M)
+        if segs:
+            return int(segs[0][1])
+    return 0
+
+def find_spread_socket(spreadport):
+    hexport = "%X" % spreadport
+    udp = open("/proc/net/udp",'r')
+    # read header row
+    headerelems = udp.readline().split()
+    header = {}
+    for x in range(len(headerelems)):
+        header[headerelems[x].strip()] = x
+
+    for line in udp:
+        elems = [x.strip() for x in line.split()]
+        laddr = elems[header["local_address"]]
+        port = laddr.split(":")[1]
+        if port == hexport:
+            return elems[header["inode"]]
+    
+    # didn't find it
+    return None
+
+def find_spread_with_socket(socket,confpath):
+    return 1
+
+
+def find_all_spreads():
+    proc = subprocess.Popen(["/bin/ps","-C","spread","-o","pid=,cmd="],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    (result,err) = proc.communicate()
+    entries = result.split("\n")
+    spreads = []
+    for line in result.split("\n"):
+        elems = line.split();
+        if not elems:
+            continue
+        pid = elems[0]
+        conf = None
+        for x in elems[1:]:
+            if x.endswith("spread.conf"):
+                conf = x
+        if conf:
+            spreads.append({"pid": int(pid), "conf": conf, "port": get_spread_port(conf)})
+    return spreads
+
+if len(sys.argv) != 2:
+    print """Usage: kill_spreads <catalogpath>
+
+Kills all spreads that might conflict with starting database at given catalogpath.
+Any currently running spread for that database is not disturbed.
+Any spread running on a different port is not disturbed."""
+    sys.exit(1)
+
+catalogpath = sys.argv[1]
+confpath = os.path.join(catalogpath,"spread.conf")
+if not os.path.exists(confpath):
+    print "ERROR: Non-existent spread config %s" % confpath
+    sys.exit(1)
+
+myport = get_spread_port(confpath)
+if not myport:
+    print "ERROR: Unable to parse spread conf at %s" % confpath
+    sys.exit(1)
+
+inuse = find_spread_socket(myport)
+if not inuse:
+    # nothing to do - no spread is running on that port
+    print "OK"
+    sys.exit(0)
+
+spreads = find_all_spreads()
+target = None
+for sp in spreads:
+    if sp['port'] == myport:
+        if sp['conf'] != confpath:
+            # found someone to kill
+            target = sp
+        else:
+            # found our own spread running
+            print "OK"
+            sys.exit(0)
+
+if not target:
+    print "ERROR: Required port is in use by an unknown process"
+    sys.exit(1)
+
+print "Killing spread pid %s using %s" % (target['pid'], target['conf'])
+try:
+    os.kill(target['pid'],9)
+except OSError as e:
+    print "ERROR: Cannot kill spread: %s" % e
+    sys.exit(1)
+
+time.sleep(1)  # wait for it to die
+
+if find_spread_socket(myport):
+    print "ERROR: Port %s still in use after killing spread" % myport
+    sys.exit(1)
+
+print "Killed"
+sys.exit(0)
