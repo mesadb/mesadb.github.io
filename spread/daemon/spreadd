@@ -1,0 +1,189 @@
+#!/bin/sh
+#
+### spreadd - startup/shutdown for the Spread daemon
+#
+#**************************************************
+#
+# Redistribution and use in source and binary forms of this code, with or
+# without modification, are permitted provided that the following
+# conditions are met:
+# 
+# Redistributions of source code must retain this list of conditions and
+# the following disclaimer as a part of such source code. Redistributions
+# in binary form must reproduce this list of conditions and the following
+# disclaimer in the documentation and/or other materials provided with the
+# distribution.  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+# CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING,
+# BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+# NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+# USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+# ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+# THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#**********************************************
+#
+#   Spread is an open source, high performance, fault tolerant, message processing 
+#   system.  It is useful for application-level multicasting, node-to-node 
+#   communiction, etc.  
+# 
+#   See:  http://www.spread.org for more details on Spread and its use.
+#
+#   Notes:
+#          Assumes that the default port 4803 is being used.  Change this
+#          by modifying the SP_PORT variable.
+#
+#   chkconfig: 345 90 10
+#   description: Startup/shutdown script for the Spread daemon
+#
+
+#
+# Source function library.
+#
+. /etc/rc.d/init.d/functions
+processname="spread"
+servicename="spread"
+
+#
+# Sanity checks.
+#
+. /etc/sysconfig/network
+
+[ "${NETWORKING}" = "no" ] && exit 0
+
+[ -r /etc/sysconfig/spreadd ] || exit 0
+. /etc/sysconfig/spreadd
+[ -z "$SPREADARGS" ] && exit 0
+
+#
+# Mostly a direct copy of the status function from functions, but without
+# echoing anything, to avoid messing up the output
+#
+check_status() {
+	base=${1##*/}
+
+	# First try "pidof"
+	pid="$(__pids_pidof "$1")"
+	if [ -n "$pid" ]; then
+	        return 0
+	fi
+
+	# Next try "/var/run/*.pid" files
+	__pids_var_run "$1" "$pid_file"
+	case "$?" in
+		0)
+			return 0
+			;;
+		1)
+	                return 1
+			;;
+	esac
+	# See if /var/lock/subsys/${base} exists
+	if [ -f /var/lock/subsys/${base} ]; then
+		return 2
+	fi
+	return 3
+}
+
+RETVAL=0
+start() {
+    echo -n $"Starting spread daemon: "
+
+    if [ -f /var/lock/subsys/$servicename ]; then
+	# spread is already running, don't start another
+	echo_failure
+	RETVAL=1
+	echo
+	return
+    fi
+
+    # cleanup just in case?
+    rm -f /tmp/$SP_PORT
+
+    if [ ! -x $SPREADPATH/spread ] ; then
+	echo_failure
+	RETVAL=1
+	echo
+	return
+    fi
+
+    nice --11 $DAEMONIZEPATH/daemonize -p $DAEMONPIDFILE -u $SP_USER -o $DAEMONIZEOUTPUTPATH -v $SPREADPATH/$servicename $SPREADARGS > /dev/null
+    RETVAL=$?
+    if [ $RETVAL -eq 0 ] ; then
+
+	# verify spread is really up, and didn't just silently fail
+	# and return 0 in a very unfriendly way if, for example, it
+	# couldn't bind to its port or its configuration file is bad
+
+	status $processname
+	RETVAL=$?
+	if [ $RETVAL -ne 0 ] ; then
+	    echo_failure
+	    RETVAL=1
+	else
+	    touch /var/lock/subsys/$servicename
+	    echo_success
+	fi
+
+    else
+        echo_failure
+	RETVAL=1
+    fi
+    echo
+}
+
+stop() {
+    echo -n $"Stopping spread daemon: "
+
+    killproc $processname
+    RETVAL=$?
+    echo
+    if [ $RETVAL -eq 0 ] || [ $RETVAL -eq 1 ] || [ $RETVAL -eq 7 ]; then
+	rm -f /tmp/$SP_PORT
+        rm -f /var/lock/subsys/$servicename
+    fi
+    echo
+}
+
+[ -f $SPREADPATH/spread ] || exit 0
+
+# See how we were called.
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    status)
+        status $processname
+        RETVAL=$?
+
+	# Make some suggestions.  0 is running, 3 is normal stop.
+	if [ $RETVAL -ne 0 ] && [ $RETVAL -ne 3 ] ; then
+	    echo "Try using 'spreadd stop' to clear state"
+	elif [ $RETVAL -eq 3 ] ; then
+	    echo "If you are having trouble starting spread, check /opt/vertica/config/vspread.conf"
+	    echo "and spread logs in /tmp/spread_* and /var/log/spreadd.log"
+	fi
+        ;;
+    restart)
+        stop
+	sleep 3
+        start
+        ;;
+    condrestart)
+        if [ -f /var/lock/subsys/$servicename ]; then
+            stop
+	    sleep 3
+            start
+        fi
+        ;;
+    *)
+        echo $"Usage: $0 {start|stop|status|restart|condrestart}"
+        ;;
+esac
+exit $RETVAL
