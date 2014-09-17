@@ -43,7 +43,7 @@
 # Required-Start: $syslog $network
 # Should-Start:
 # Required-Stop:  
-# Should-Stop:    verticad
+# Should-Stop:    mesadbd
 # Default-Start:  2 3 4 5
 # Default-Stop:   0 1 6
 # Description:    Startup/shutdown script for the Spread daemon
