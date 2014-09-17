@@ -125,7 +125,7 @@ case "$1" in
         else
             echo -e "$rc_dead"
 	    echo "If having trouble starting spread, try using 'spreadd stop' to clear state,"
-	    echo "check /opt/vertica/config/vspread.conf and spread logs in /tmp/spread_*"
+	    echo "check /opt/mesadb/config/vspread.conf and spread logs in /tmp/spread_*"
 	    echo "and /var/log/spreadd.log, also check that /var has not run out of space."
 	    RETVAL=1
         fi
