@@ -1,0 +1,125 @@
+#!/bin/bash
+
+#
+# Copyright Vertica, an HP Company 2012
+# All rights reserved
+#
+# Description: a script designed to be able to reconfigure vertica metadata to match
+# an updated set of ipaddresses.  Example use: restarting a cloud cluster without a virtual private lan
+#
+#
+
+
+SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
+
+. $SCRIPT_DIR/mod_utils
+
+
+
+ROOT_PEM=""
+CONFIG_FILE=""
+SKIP_SPREAD=false
+
+
+usage(){
+        cat <<EOF
+
+reconfigure_cluster -k <root pem file> -f <filename> [-S]
+
+	-S (optional) will skip reconfiguring spread and leave it on the old set of ips
+
+	where configuration file has the format:
+
+	<old_ip_address1>=<new_ip_address1>
+	<old_ip_address2>=<new_ip_address2>
+	<old_ip_address3>=<new_ip_address3>
+	...
+
+EOF
+exit 1
+}
+
+
+process_args(){
+	while getopts "k:f:S" options; do
+		case $options in
+			k ) ROOT_PEM=$OPTARG;;
+			f ) CONFIG_FILE=$OPTARG;;
+			S ) SKIP_SPREAD=true;;
+			* ) usage;;
+		esac
+	done;
+}
+
+
+if [ "$#" -eq 0 ]; then
+        usage
+        exit 1
+fi
+
+process_args $*
+
+if [ -z $ROOT_PEM ]; then
+        echo "Please supply a root pem file using -k option"
+        usage
+        exit 1
+fi
+
+if [ -z $CONFIG_FILE ]; then
+	echo "Please supply a configuration file using  -f  option"
+        usage
+        exit 1
+fi
+
+
+
+# this only works (and well) in bash v4
+#declare -A ip_map
+
+# bash 3 workaround
+ip_map_orig=()
+ip_map_update=()
+
+all_on_a_line=`cat $CONFIG_FILE | sed 's/\n/ /g'`
+for strPair in $all_on_a_line; do
+	t=`echo $strPair | sed 's/=/ /g'`
+	pair=($t)
+	# bash 4
+	#ip_map[${pair[0]}]=${pair[1]}
+
+	#bash 3
+	ip_map_orig[$[${#ip_map_orig[@]}+1]]=${pair[0]}
+	ip_map_update[$[${#ip_map_update[@]}+1]]=${pair[1]}
+done
+
+# bash 4
+# for orig_ip in ${!ip_map[@]}; do
+#	sed -i.bak -e"s/$orig_ip/${ip_map[$orig_ip]}/g" /opt/vertica/config/admintools.conf
+# done
+
+# bash 3, workaround makes this start at 1 instead of 0
+idx=1
+for orig_ip in ${ip_map_orig[@]}; do
+	sed -i.bak -e"s/$orig_ip/${ip_map_update[$idx]}/g" /opt/vertica/config/admintools.conf
+	let "idx = $idx + 1"
+done
+
+# ok copy admintools.conf throughout cluster.
+for new_ip in ${ip_map_update[@]}; do
+	scp ${SSH_ARGS[@]}  -i $ROOT_PEM /opt/vertica/config/admintools.conf $new_ip:/opt/vertica/config/admintools.conf
+done
+
+if [ "$SKIP_SPREAD" == "false" ]; then
+    unset IFS
+    hostline=""
+    for host in ${ip_map_update[@]}; do
+    	hostline+=$host","
+    done
+    hostline_length=${#hostline}
+    hostline=${hostline:0:hostline_length-1}
+    echo "reconfiguring spread"
+    $SCRIPT_DIR/configure_spread -h $hostline -k $ROOT_PEM 
+fi
+
+
+

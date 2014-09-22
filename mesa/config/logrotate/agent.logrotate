@@ -1,0 +1,12 @@
+/opt/mesadb/log/agent*.log {
+    # rotate weekly
+    daily
+    # and keep for 52 weeks
+    rotate 7
+    # no complaining if agentt did not start yet
+    missingok
+    # compress log after rotation
+    compress
+    # rotate by copying it aside and truncating
+    copytruncate
+}

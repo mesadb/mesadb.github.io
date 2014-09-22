@@ -1,0 +1,92 @@
+VERTICA-MIB DEFINITIONS ::= BEGIN
+IMPORTS
+OBJECT-TYPE FROM RFC-1212
+TRAP-TYPE   FROM RFC-1215
+DisplayString FROM RFC1213-MIB
+enterprises FROM RFC1155-SMI;
+
+vertica OBJECT IDENTIFIER ::= { enterprises 31207 }
+verticaObjects OBJECT IDENTIFIER ::= { vertica 1 }
+verticaTraps  OBJECT IDENTIFIER ::= { vertica 2 }
+verticaTrapsPrefix  OBJECT IDENTIFIER ::= { verticaTraps 1 }
+verticaGenericTrap  OBJECT IDENTIFIER ::= { verticaTrapsPrefix 1 }
+
+vertEventType	OBJECT-TYPE
+	SYNTAX		INTEGER
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION	"Number of the event type being reported."
+	::= { verticaObjects 1 }
+
+vertEventOID	OBJECT-TYPE
+	SYNTAX		INTEGER
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION	"Unique Object Identifier for this Event"
+	::= { verticaObjects 2 }
+
+vertEventTime	OBJECT-TYPE
+	SYNTAX		DisplayString
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION	"Time when the event was first reported."
+	::= { verticaObjects 3 }
+
+vertEventSeverity	OBJECT-TYPE
+	SYNTAX		INTEGER		{ emergency(1), alert(2), critical(3), error(4), warning(5), notice(6), info(7), debug(8) }
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION	"Severity of the event. Some are more severe than others"
+	::= { verticaObjects 4 }
+
+vertEventStatus	OBJECT-TYPE
+	SYNTAX		INTEGER	{ open(1), clear(2) }
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION	"useful for clearing open events (eg disk space issue resolved)"
+	::= { verticaObjects 5 }
+
+vertNodeName	OBJECT-TYPE
+	SYNTAX		DisplayString
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION	"name of the node in the cluster"
+	::= { verticaObjects 6 }
+
+vertHostName	OBJECT-TYPE
+	SYNTAX		DisplayString
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION	"name of the host in the cluster"
+	::= { verticaObjects 7 }
+
+vertDescription	OBJECT-TYPE
+	SYNTAX		DisplayString
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION	"human readable description of the event/data etc."
+	::= { verticaObjects 8 }
+	
+vertDatabaseName OBJECT-TYPE
+	SYNTAX		DisplayString
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION "name of the database"
+	::= { verticaObjects 9 }
+	
+vertEventShortDesc OBJECT-TYPE
+	SYNTAX		DisplayString
+	ACCESS	read-only
+	STATUS		mandatory
+	DESCRIPTION "short description of the event"
+	::= { verticaObjects 10 }
+	
+databaseEvent TRAP-TYPE
+	ENTERPRISE verticaGenericTrap
+	VARIABLES  { vertEventType, vertEventOID, 
+			 vertEventTime, vertEventSeverity,
+			 vertEventStatus, vertNodeName, vertHostName, vertDescription, vertDatabaseName, vertEventShortDesc }
+	DESCRIPTION "Generic Vertica v1 Trap.  "
+	::= 1
+	
+END

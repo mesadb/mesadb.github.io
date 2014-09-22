@@ -1,0 +1,59 @@
+#!/bin/bash
+# 
+#
+# Description: configure spread
+
+# there are two spread configure script files in dir,
+# mod_utils is used to , mod_spread is used to .
+SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
+
+. $SCRIPT_DIR/mod_utils
+. $SCRIPT_DIR/mod_spread
+
+#
+# default
+#
+ipaddrs=()
+ROOT_PEM=""
+hostlist=""
+usage(){
+        cat <<EOF
+        configure_spread -h <host list> -k <root pem file> 
+EOF
+exit 1
+}
+
+#
+#   Main
+#
+process_args $*
+build_ip_addr_list
+
+# stop spread
+stop_spread ${ipaddrs[@]}
+if [ $? -ne 0 ]; then
+	message  2 40 "Failed to stop spread on host $"
+fi
+# rewrite spread config
+rewrite_spreadd ${ipaddrs[@]}
+if [ $? -ne 0 ]; then
+	message  1 41 "Failed to rewrite spreadd config"
+fi
+
+
+# create mspread.conf
+unset IFS
+sorted_hosts=(`sorted "${ipaddrs[@]}"`)
+write_mspread ${sorted_hosts[@]}
+
+# copy spread to all nodes in the cluster (overwrite self?)
+copy_file_to_cluster "/tmp/myspread.txt" "/opt/mesadb/config/mspread.conf" ${ipaddrs[@]}
+if [ $? -ne 0 ]; then
+	message  1 42 "Failed to copy to /tmp/myspread.txt to another host in cluster, this file is needed for spread"
+fi
+
+start_spread ${ipaddrs[@]}
+if [ $? -ne 0 ]; then
+	message  1 43 "Failed to start spread config"
+fi
+

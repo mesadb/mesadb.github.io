@@ -1,0 +1,54 @@
+#!/bin/bash
+# 
+#
+# Description: clean(kill and uninstall Mesa) nodes on cluster
+
+SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
+ 
+. $SCRIPT_DIR/mod_utils
+
+ 
+
+usage(){
+     cat <<EOF
+     $0 -h <hosts to cleanup> -k <root private key file>  [ -U ssh user : default root]
+     e.g. $0 -h 10.20.100.226,10.20.100.227 -k root.pem     
+EOF
+exit 1
+}  
+
+
+  while getopts "U:h:k:?" options; do
+              case $options in
+                          h ) hostlist="$OPTARG";;
+                          k ) ROOT_PEM="$OPTARG";;
+                          U ) SSH_USER=$OPTARG;;
+                          \? ) usage;;
+                          * ) usage;;
+                  esac
+ done;
+
+
+if [ -z "${ROOT_PEM}" ]; then
+    echo  "ERROR: root pem is required"
+    usage
+fi
+
+IFS=","
+
+for ip in ${hostlist}; do
+	ssh "${SSH_ARGS[@]}"  -i $ROOT_PEM $ip "pkill -9 mesadb" 1>/dev/null 2>&1
+	ssh "${SSH_ARGS[@]}"  -i $ROOT_PEM $ip "pkill -9 spread" 1>/dev/null 2>&1
+	ssh "${SSH_ARGS[@]}"  -i $ROOT_PEM $ip "pkill -9 agent.sh" 1>/dev/null 2>&1
+	ssh "${SSH_ARGS[@]}"  -i $ROOT_PEM $ip "pkill  -f -9 simply_fast.py" 1>/dev/null 2>&1
+
+    # uninstall all mesadb installed packages
+	ssh "${SSH_ARGS[@]}"  -i $ROOT_PEM $ip "rpm -e --nodeps --noscript mesadb" 1>/dev/null 2>&1
+    ssh "${SSH_ARGS[@]}"  -i $ROOT_PEM $ip "rpm -e --nodeps --noscript mesadb-ce" 1>/dev/null 2>&1
+	ssh "${SSH_ARGS[@]}"  -i $ROOT_PEM $ip "rpm -e --nodeps --noscript mesadb-console" 1>/dev/null 2>&1
+    # removed all mesadb data file
+    ssh "${SSH_ARGS[@]}"  -i $ROOT_PEM $ip "rm -rf /opt/mesadb" 1>/dev/null 2>&1
+done
+
+echo " Completed"
+exit 0

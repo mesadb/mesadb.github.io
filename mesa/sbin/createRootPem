@@ -1,0 +1,100 @@
+#!/bin/bash
+# 
+# 创建根用户pem认证文件
+# Description: create pem file for root user
+
+#
+# default
+#
+ipaddrs=()
+ROOT_PEM=""
+hostlist=""
+
+
+usage(){
+        cat <<EOF
+        createRootPem -h <host list> 
+EOF
+exit 1
+}
+
+while getopts "h:?:" options; do
+    case $options in
+        h ) IFS=',' hostlist=($OPTARG);;
+       \? ) usage;;
+        * ) usage;;
+    esac
+done;
+
+for host in  "${hostlist[@]}"; do
+   ip=`nslookup $host | grep Add | grep -v '#' | cut -f 2 -d ' '`
+   if [ "$ip" != "" ]; then
+      ipaddrs[$[${#ipaddrs[@]}+1]]=$ip
+   else
+      ipaddrs[$[${#ipaddrs[@]}+1]]=$host
+   fi
+done;
+
+
+IFS=""
+
+#
+#     Stage the passwordless key generation using the first ip in the list
+#
+echo "Staging the root passwordless key generation"
+
+#
+#     Test if .ssh directory exists, if not create it.
+#
+echo "Testing the existence of .ssh directory"
+#
+cd
+ls -a ~/.ssh
+status=$?
+if [ $status != 0 ]; then
+        echo "Creating the directory .ssh "
+        mkdir .ssh
+fi
+
+#
+#     Test if there is an id_rsa file, if not create one
+#
+echo "Testing if there is an id_rsa key file "
+ls -a ~/.ssh/vid_rsa
+status=$?
+
+if [ $status == 0 ]; then
+        echo "Remove vid_rsa key file before generating"
+        rm -rf ~/.ssh/vid_rsa
+fi
+
+echo "Generating passwordless ssh key file"
+ssh-keygen -q -t rsa -f ~/.ssh/vid_rsa -N ''
+
+
+#
+#     Reset the permissions on the .ssh directory
+#
+echo "Resetting the permissions on the .ssh directory and files "
+cd .ssh; chmod 700 /root/.ssh; cat vid_rsa.pub >> vauthorized_keys2; chmod 600 ~/.ssh/*
+
+
+
+#
+#     Copy the .ssh directory to the other nodes  and change the ownership and permission
+#
+msg1="Copying and resetting permissions to .ssh directory for: "
+for ip in ${ipaddrs[@]}; do
+        echo "$msg1  $ip"
+        ssh $ip "mkdir /root/.ssh"
+	scp -r /root/.ssh/vauthorized_keys2 $ip:/root/.ssh/.
+        ssh $ip "cd /root/.ssh/;cat vauthorized_keys2 >> authorized_keys2; chmod 600 /root/.ssh/authorized_keys2"
+done
+
+for ip in ${ipaddrs[@]}; do
+        ssh -i /root/.ssh/vid_rsa $ip "rm /root/.ssh/vauthorized_keys2"
+done
+
+echo "  "
+echo " Completed"
+exit 0

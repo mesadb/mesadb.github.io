@@ -1,0 +1,402 @@
+#!/bin/bash
+#
+#
+#
+
+### mesa_agent - startup/shutdown for the Mesadb Scalable Data Warehousing Daemon
+#
+#   The Mesadb Data Warehousing System is a highly scalable analytic data warehousing system.
+#
+#   Notes:
+#       This is rather a thin implementation because starting up a single
+#       node of a clustered database is complex.  So this script simply
+#       delivers a control command to the Mesadb Administration Tools, which
+#       are responsible for implementing the command and returning the result.
+#
+# RedHat metadata format:
+#   chkconfig: 345 99 10
+#   description: Startup/shutdown script for the Mesadb Warehousing System
+#
+# LSB/SUSE format:
+### BEGIN INIT INFO
+# Provides:       mesadb_agent
+# Required-Start: $network
+# Should-Start:
+# Required-Stop:
+# Should-Stop:
+# Default-Start:  3 5
+# Default-Stop:   0 1 6
+# Description:    Startup/shutdown script for the Mesadb Warehousing System
+### END INIT INFO
+
+
+
+#
+# Determine our OS
+#
+
+[ -f /etc/redhat-release ] && OS=redhat
+[ -f /etc/SuSE-release ] && OS=suse
+[ -f /etc/debian_version ] && OS=debian
+
+#
+# Source function library.
+#
+case $OS in
+    redhat)
+        . /etc/rc.d/init.d/functions
+        ;;
+    suse)
+        . /etc/rc.status
+        ;;
+    debian)
+        . /lib/lsb/init-functions
+        ;;
+    *)
+        echo Unsupported OS
+        exit 1
+        ;;
+esac
+
+
+
+#
+#
+# Checking agent enable options of /opt/mesadb/config/agent.conf
+#
+#
+
+
+function check_agent_enabled {
+
+    # Set option file name, and option key name
+    FILE=/opt/mesadb/config/agent.conf
+    KEYNAME=use_agent
+
+    # Check file. Use agent anyway if file doesn't exist
+    if [  -f "$FILE" ]
+    then
+        # get "$KEYNAME" line
+        agentline=`grep -e $KEYNAME $FILE`
+        echo $agentline
+        # if agentline empty use agent anyway, otherwise check option
+        if [ ! "$agentline" = '' ]
+        then
+            # get option
+            option=`echo $agentline | sed "s/$KEYNAME[= ]*//"`
+            echo $option
+            # convert option to lower case
+            option=`echo $option | tr '[:upper:]' '[:lower:]'`
+
+            # check option
+            # $KEYNAME=true/false.
+
+            if [ ! $option == 'true' ]
+            then
+                echo 'mesadb_agent: the use agent option is NOT TRUE, please see /opt/mesa/config/agent.conf'
+                exit 0
+            fi
+
+        fi
+
+    fi
+
+}
+
+
+
+#
+#
+# Enable the agent
+#
+
+
+function enable_agent {
+    # Set option file name, and option key name
+    FILE=/opt/mesadb/config/agent.conf
+    KEYNAME=use_agent
+
+    if [ -f "$FILE"  ]
+    then # if file exists
+        agentline=`grep -e $KEYNAME $FILE`
+
+        if [ "$agentline" = '' ]
+        then
+            echo "$KEYNAME=true" >> $FILE # if no such line add this line
+        else
+            sed -i "s/$agentline/$KEYNAME=true/g" $FILE  # substitute the $agentline
+        fi
+    else # create this file
+        echo "$KEYNAME=true" >> $FILE
+    fi
+    success
+
+}
+
+
+
+
+#
+#
+# Disable the agent
+#
+
+
+function disable_agent {
+    # Set option file name, and option key name
+    FILE=/opt/mesadb/config/agent.conf
+    KEYNAME=use_agent
+
+    if [ -f "$FILE"  ]
+    then # if file exists
+        agentline=`grep -e $KEYNAME $FILE`
+
+        if [ "$agentline" = '' ]
+        then
+            echo "$KEYNAME=false" >> $FILE # if no such line add this line
+        else
+            sed -i "s/$agentline/$KEYNAME=false/g" $FILE  # substitute the $agentline
+        fi
+    else # create this file
+        echo "$KEYNAME=false" >> $FILE
+    fi
+
+    success
+
+}
+
+
+
+#
+# OS-specific helper functions
+#
+# error(msg) prints the error message then exits
+#
+function error {
+    if [ "$mode" == "status" ]; then
+        echo $1
+    else
+        echo $1
+        case $OS in
+            redhat)
+                echo_failure
+                ;;
+            suse)
+                echo $rc_failed
+                ;;
+            debian)
+                log_failure_msg
+                ;;
+        esac
+    fi
+    exit 1
+}
+
+# success() exits appropriately
+#
+function success {
+    if [ "$mode" == "status" ]; then
+        echo $1
+    else
+        echo $1
+        case $OS in
+            redhat)
+                echo_success
+                ;;
+            suse)
+                echo -e "$rc_running"
+                ;;
+            debian)
+                log_success_msg
+                ;;
+        esac
+    fi
+    exit 0
+}
+
+
+stop() {
+    echo -n $"Stopping mesadb agent: "
+
+    if [ -f /opt/mesadb/log/agent.pid ]; then
+        PID=`cat /opt/mesadb/log/agent.pid`
+        if [ "$PID" != "" ]; then
+           kill -9 -$PID 
+           RETVAL=$?
+        fi
+        rm /opt/mesadb/log/agent.pid
+    fi
+
+    ps -eo comm,pid | grep agent.sh >/dev/null 2>&1
+    # check mesadb agent proc existence
+    if [ $? -eq 0 ];then
+        echo "mesadb agent is already running, stopping..."
+        PID=`ps -eo comm,pid | grep agent.sh | sed -r 's/[^0-9]*//'`
+        # if there are multiple agent.sh running, kill each of them and their children
+        for GID in $PID
+        do
+                kill -9 -$GID
+                done
+        rm -f /opt/mesadb/log/agent.pid
+    fi
+
+    echo
+}
+
+
+
+start(){
+# Ready to roll...
+#
+# Sanity checks: networking must be up, the
+# mesadb admin tools must be installed.
+#
+
+
+if [ "$OS" == "redhat" ]; then
+    . /etc/sysconfig/network
+    if [ ${NETWORKING} = "no" ]; then
+        error
+    fi
+fi
+
+# check whether mesadb agent is already running. If so, kill it and restart.
+    ps -eo comm,pid | grep agent.sh >/dev/null 2>&1
+    # check mesadb agent proc existence
+    if [ $? -eq 0 ];then
+        echo "mesadb agent is already running, stopping..."
+        PID=`ps -eo comm,pid | grep agent.sh | sed -r 's/[^0-9]*//'`
+        # if there are multiple agent.sh running, kill each of them and their children
+        for GID in $PID
+        do
+                kill -9 -$GID
+                done
+        rm -f /opt/mesadb/log/agent.pid
+    fi
+
+
+
+
+# Find out where mesadb is installed, use that path
+
+if [ "$OS" == "redhat" -o "$OS" == "suse" ]; then
+    vertica_prefix=`rpm -q --whatprovides vertica-base --qf %{INSTPREFIXES}`
+    if [ $? -ne 0 ]; then
+        # No RPM installed
+        error "No RPM: $vertica_prefix"
+    fi
+elif [ "$OS" ==  "debian" ]; then
+    query_out=`dpkg-query -S /opt/vertica/config | awk -F": " '{print $2}'`
+    if [ $? -ne 0 -o -z "$query_out" ]; then
+        # No package installed
+        error "No package"
+    fi
+    vertica_prefix=`expr "$query_out" : "\(.*\)/config"`
+else
+    error "Unknown OS = $OS"
+fi
+
+# Good to go, execute the command
+if [[ -e ${vertica_prefix}/config/users ]]; then
+
+# XXX: This should go by the owner of admintools.conf, now.  Not config/users.
+cd ${vertica_prefix}/config/users
+for user in *; do
+    #echo "User: ${user}"
+    if [ -f ${vertica_prefix}/config/users/${user}/agent.conf ]; then
+ # output goes to /dev/null for this script, but most stuff is in admin tools log
+
+        echo "starting agent"
+        cd ${vertica_prefix}/agent
+        # Note: previously we ran daemonize as root. Now we run as user.  Need
+        # to change ownership of files.  Ignore failures (that's the 'or' part)
+        chown "${user}:" "${vertica_prefix}/log/agent.pid" 2>/dev/null || [ 1 ]
+        chown "${user}:" "${vertica_prefix}/log/agent_${user}.log" 2>/dev/null || [ 1 ]
+        chown "${user}:" "${vertica_prefix}/log/agent_${user}.err" 2>/dev/null || [ 1 ]
+        # su --login to $user in order to go through environment setup.
+        # As that user, daemonize the process.  Causes su to return immediately.
+        su ${user} --login --command "${vertica_prefix}/sbin/daemonize -p ${vertica_prefix}/log/agent.pid -o ${vertica_prefix}/log/agent_${user}.log -e ${vertica_prefix}/log/agent_${user}.err -v ${vertica_prefix}/agent/agent.sh ${vertica_prefix}/config/users/${user}/agent.conf"
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ] ; then
+           if [ -e /var/lock/subsys ]; then
+              touch /var/lock/subsys/vertica_agent-${user}
+           else
+              touch /var/lock/vertica_agent-${user}
+           fi
+           if [ $? -eq 0 ] ; then
+              success "$1 OK for user: ${user}"
+           else
+              error "$1 not OK"
+           fi
+        else
+           error "$1 not OK"
+        fi
+    fi
+done;
+fi
+}
+
+# See how we were called.
+case "$1" in
+    start)
+        check_agent_enabled
+        start
+        ;;
+    stop)
+        #check_agent_enabled
+        stop
+        ;;
+    status)
+        check_agent_enabled
+        echo -n $"Vertica Agent: "
+        case "$OS" in
+            suse | debian)
+                RETVAL=0
+                PID=`pidof  -x /opt/vertica/agent/agent.sh;RETVAL=$?`;
+                if [ $RETVAL -ne 0 ]; then
+                    exit 3
+                fi
+
+                if [ "$PID" = "" ]; then
+                    echo "agent is stopped"
+                    exit 3
+                else
+                    echo "(pid "$PID") is running..."
+                fi
+                ;;
+            *)
+                RETVAL=0
+                PID=`status -p /opt/vertica/log/agent.pid /bin/sh;RETVAL=$?;`
+                if [ "$PID" = "sh is stopped" ]; then
+                    echo "agent is stopped"
+                    exit 3
+                else
+                    echo $PID
+                fi
+
+                # Make some suggestions.  0 is running, 3 is normal stop.
+                if [ $RETVAL -ne 0 ] && [ $RETVAL -ne 3 ] ; then
+                    echo "Try using 'vertica_agent stop' to clear state"
+                fi
+                ;;
+        esac
+        ;;
+    restart)
+        check_agent_enabled
+        stop
+        sleep 3
+        start
+        ;;
+    enable)
+        enable_agent
+        ;;
+    disable)
+        disable_agent
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|status|restart|condrestart|enable|disable}"
+        exit 1
+        ;;
+esac
+
+

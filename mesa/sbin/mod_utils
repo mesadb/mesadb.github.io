@@ -1,0 +1,263 @@
+#!/bin/bash
+# 
+# Copyright Vertica, an HP Company 2012 
+# All rights reserved 
+# 
+# Description: utilities
+
+OS=redhat
+#
+# Determine our OS
+#
+
+[ -f /etc/redhat-release ] && OS=redhat
+[ -f /etc/SuSE-release ] && OS=suse
+[ -f /etc/debian_version ] && OS=debian
+
+
+if [ -e "./ssh_config" ];then
+    SSH_ARGS=(-F ./ssh_config)
+fi
+BACKUP=${BACKUP:-`date +%s`}
+
+INSTALL_TYPE="rpm"
+if [ "$OS" == "redhat" -o "$OS" == "suse" ]; then
+   LOCAL_RPM=`rpm -qa vertica` 
+elif [ "$OS" ==  "debian" ]; then
+   INSTALL_TYPE="package"
+   LOCAL_RPM=`dpkg -p vertica | grep Version `
+fi;
+
+
+check_bin()
+{
+    local bin=$1
+    which $bin 1>/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        message 1 10 "binary $bin is required for this script but not found in PATH=$PATH"
+    fi
+}
+
+backtrace () {
+   echo "-----------------------"
+   echo "Backtrace is:"
+   i=0
+   while caller $i
+   do
+      i=$((i+1))
+   done
+   echo "-----------------------"
+}
+
+message()
+{
+    local level=$1
+    local msg_no=$2
+    local msg_text=$3
+
+    if [ -z "${level}" -o -z "${msg_no}" -o -z "${msg_text}" ]; then
+            echo  " incorrect call to function message(). usage message (level, msg_no, msg_text)"
+    fi
+
+
+    case ${level} in
+            0 ) echo   "INFO: $msg_no: $msg_text";;
+            2 ) echo   "WARN: $msg_no: $msg_text";;
+            3 ) echo   "ERROR: $msg_no: $msg_text";;
+            4 ) [ -n "$debug" ] && echo   "DEBUG: $msg_no: $msg_text";;
+            5 ) echo   "STEP $msg_no: $msg_text";;
+            1 ) echo   "FATAL ($msg_no): $msg_text";
+                if [ -n "$debug" ];then
+                    backtrace
+               fi;
+               exit ${level}${msg_no};;
+            * ) echo   "ASSERT: incorrect call to function message(). usage message (level, msg_no, msg_text)"; exit -1 ;;
+    esac 
+}
+
+
+process_args(){
+
+        if [ "$#" -eq 0 ]; then
+                usage
+                message 1 10 "no arguments passed to function or script $0" 
+        fi
+
+        while getopts "h:k:u:p:l:L:U:?:" options; do
+                case $options in
+                        h ) IFS=',' hostlist=($OPTARG);;
+                        k ) ROOT_PEM="$OPTARG";;
+                        l ) VERT_DIR=$OPTARG;;
+                        p ) VERT_PASSWORD=$OPTARG;; 
+                        u ) VERT_USER=$OPTARG;;
+                        L ) LICENSE_KEY=$OPTARG;;
+                        U ) SSH_USER=$OPTARG;;
+                        \? ) usage;;
+                        * ) usage;;
+                esac
+        done;
+        validate_args
+}
+
+validate_rpm()
+{
+        if [ -z $RPM_FILE ]; then
+                usage
+                message 1 13 "Please supply a ${INSTALL_TYPE} file using -i option"
+        fi
+
+}
+
+validate_license()
+{
+        if [ -z "${LICENSE_KEY}" ]; then
+                message 1 11  "Please supply a Vertica License key file using -L option"
+                usage
+        fi
+	    if [ ! -e "${LICENSE_KEY}" ]; then
+                message 1 12  "Vertica License key file supplied using -L does not exist"
+        fi
+}
+
+
+validate_args(){
+        if [ -z $hostlist ]; then
+                usage
+                message 1 14 "Please supply a list of ip addresses using -A, -R or -s  option"
+        fi
+
+	
+
+	IFS=,
+	hostarray=( $hostlist )
+	unset IFS
+
+
+    	for host in "${hostarray[@]}"
+	do
+        	if [ "${host}" == "localhost" -o "${host}" == "127.0.0.1" ] ; then
+                	message 1 19 "You cannot use localhost, or loopback IP (127.0.0.1) as an argument to -s, -A or -R. you must use the network IP of the node"
+	        fi
+	done
+
+
+        if [ -z "${ROOT_PEM}" ]; then
+                echo "Please supply a root pem file using -k option"
+                usage
+                message 1 15 "Please supply a root pem file using -k option"
+        fi
+        if [ -z "$SSH_USER" ]; then
+                # use root
+                message 4 17  "No SSH user supplied using -U option, using root"
+                SSH_USER=root
+        fi
+
+	if [ ! -e "${ROOT_PEM}" ]; then
+                message 1 18 "supplied root pem file does not exist"
+	fi
+
+}
+
+
+build_ip_addr_list(){
+	for host in  "${hostlist[@]}"; do
+		ip=`nslookup $host | grep Add | grep -v '#' | cut -f 2 -d ' '`
+		#ip=`gethostip -d $host` #preferred way to do it, however this may not be avaiable on all hosts
+	 	if [ "$ip" != "" ]; then
+	 		ipaddrs[$[${#ipaddrs[@]}+1]]=$ip
+	 	else
+			if [[ $host =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+				# using ip address, so its ok
+				ipaddrs[$[${#ipaddrs[@]}+1]]=$host
+			else
+           			message 1 20 "Cannot resolve IPADDR for host: $host, spread configuration will FAIL."
+			fi
+	 	fi
+	done;
+	for ip in ${ipaddrs[@]}; do
+       	ssh ${SSH_ARGS[@]} -i $ROOT_PEM -l $SSH_USER $ip 'ls >/dev/null'
+		status=$?
+                if [ $status -ne 0 ]; then
+                        message 1 19  "Failed Login Validation $ip, cannot resolve or connect to host as $SSH_USER."
+                fi
+
+        local remote_rpm=""
+        if [ "$OS" ==  "debian" ]; then
+            remote_rpm=$(ssh ${SSH_ARGS[@]} -i $ROOT_PEM -l $SSH_USER $ip "dpkg -p vertica | grep Version 2>/dev/null") 
+        else
+       	    remote_rpm=$(ssh ${SSH_ARGS[@]} -i $ROOT_PEM -l $SSH_USER $ip "rpm -qa vertica 2>/dev/null")
+        fi;
+        if [ "${remote_rpm}" != "${LOCAL_RPM}" ]; then
+                message 1 26  "local ${INSTALL_TYPE} version (${LOCAL_RPM}) does not match ${INSTALL_TYPE} version on $ip (${remote_rpm})"
+        fi
+ 
+	done
+}
+
+
+sorted(){
+	tarr=`echo $* | sed 's/ /\n/g' | sort -u | tr '\n' ' '`
+	sarr=()
+	for v in $tarr; do
+		sarr[$[${#sarr[@]}+1]]=$v
+	done
+	echo ${sarr[@]}
+}
+
+copy_file_to_cluster(){
+    unset IFS
+	source=$1
+	shift
+	dest=$1
+	shift
+	success=0
+	for ip in $*; do
+		scp -q ${SSH_ARGS[@]} -i $ROOT_PEM $source $ip:$dest 1>&2 2>/dev/null
+		status=$?
+		if [ $status -eq 1 ]; then
+			message 2 20 "Failed to copy $source to $ip:$dest"
+		fi
+		let "success=(( $success || $status ))"
+	done
+	return $success
+}
+
+
+copy_ssh_directory()
+{
+#
+#     Copy the .ssh directory to the other nodes in cluster and change the ownership and permission
+#
+msg1="Copying and resetting permissions to .ssh directory for: "
+for ip in ${ipaddrs[@]}; do
+    message 0 22 "$msg1  $VERT_USER@$ip"
+
+    ssh ${SSH_ARGS[@]} -i $ROOT_PEM $ip "su - $VERT_USER -c 'mkdir -p ~/.ssh'" 1>/dev/null 2>&1
+    scp ${SSH_ARGS[@]} -r -i $ROOT_PEM $VERT_DIR/.ssh/id_rsa $VERT_DIR/.ssh/id_rsa.pub $VERT_DIR/.ssh/authorized_keys2 $ip:$VERT_DIR/.ssh 1>/dev/null 2>&1
+    if [ $? -ne 0 ];then
+        message 1 23 "Unable to copy ~/.ssh to $VERT_USER@$ip:.ssh"
+    fi  
+
+    ssh ${SSH_ARGS[@]} -i $ROOT_PEM $ip "chown -R $VERT_USER:verticadba $VERT_DIR/.ssh" 1>/dev/null 2>&1
+    if [ $? -ne 0 ];then
+        message 1 24 "Unable to copy ~/.ssh to $ip:.ssh for user: $VERT_USER"
+    fi  
+
+    ssh ${SSH_ARGS[@]} -i $ROOT_PEM $ip "su - $VERT_USER -c 'chmod 700 ~/.ssh && chmod 600 ~/.ssh/id_rsa ~/.ssh/id_rsa.pub ~/.ssh/authorized_keys2'" 1>/dev/null 2>&1
+    if [ $? -ne 0 ];then
+        message 1 25 "Unable to set permission on .ssh or its contents for user: $VERT_USER@$ip"
+    fi  
+
+done
+}
+
+
+check_bin sort
+check_bin sed
+check_bin tr
+check_bin ssh
+check_bin scp
+check_bin awk 
+check_bin nslookup
+check_bin date
+

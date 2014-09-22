@@ -1,0 +1,86 @@
+#!/bin/bash
+# 
+#
+# Description: configure admintools
+
+SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
+
+. $SCRIPT_DIR/mod_utils
+
+BACKUP=${BACKUP:-`date +%s`}
+#
+# default
+#
+ipaddrs=()
+ROOT_PEM=""
+hostlist=""
+MESA_USER="dbadmin"
+MESA_PASSWORD=""
+MESA_DIR="/mesadb/data"
+
+
+usage(){
+        cat <<EOF
+        configure_admintools -h <host list> -k <root pem file> -l <mesadb user home directory>
+EOF
+exit 1
+}
+
+
+#
+#   Main
+#
+
+process_args $*
+build_ip_addr_list
+
+iplist=`echo ${ipaddrs[@]} | sed 's/ /,/g'`
+
+
+# fix [Cluster] section and remove default nodes from [Nodes] section
+cp /opt/mesadb/config/admintools.conf /opt/mesadb/config/admintools.orig.${BACKUP}
+if [ $? -ne 0 ]; then
+    message  2 51 "Cannot backup /opt/mesadb/config/admintools.conf"
+fi
+
+
+sed "s/^hosts =.*/hosts = $iplist/"  /opt/mesadb/config/admintools.conf   > /tmp/admintools.reconf001
+if [ $? -ne 0 ]; then
+    message  2 52 "Failed to write to /tmp/admintools.reconf001"
+fi
+
+awk -f $SCRIPT_DIR/remove_all_nodes.awk  /tmp/admintools.reconf001 > /tmp/admintools.reconf002
+if [ $? -ne 0 ]; then
+    message  2 53 "Failed to write to /tmp/admintools.reconf002"
+fi
+
+#
+#  escape the char: / in MESA_DIR
+#
+theChar=/
+escapeAndChar=\\/
+NEW_MESA_DIR=${MESA_DIR//$theChar/$escapeAndChar}
+# Now create the default nodes in the [Nodes] section including new directory and admin_conf file
+default_nodes="\n"
+idx=1
+for ip in ${ipaddrs[@]}; do
+	fmt=`printf %04d $idx`;
+	default_nodes="${default_nodes}node$fmt = $ip,$NEW_MESA_DIR,$NEW_MESA_DIR\n"
+	let "idx = $idx + 1 "
+done
+OLDIFS=$IFS
+IFS="|"
+sed -e "s/^\[Nodes.*/[Nodes]$default_nodes/" /tmp/admintools.reconf002 > /opt/mesadb/config/admintools.conf
+if [ $? -ne 0 ]; then
+    message  1 54 "Cannot write configuration to /opt/mesadb/config/admintools.conf"
+fi
+
+
+
+for ip in ${ipaddrs[@]}; do
+	scp ${SSH_ARGS[@]} -i $ROOT_PEM /opt/mesadb/config/admintools.conf $ip:/opt/mesadb/config/admintools.conf 1>/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        message  1 55 "Cannot write /opt/mesadb/config/admintools.conf to $ip:/opt/mesadb/config/admintools.conf"
+    fi
+done
+IFS=$OLDIFS

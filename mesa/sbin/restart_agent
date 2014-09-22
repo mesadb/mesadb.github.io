@@ -1,0 +1,39 @@
+#!/bin/bash 
+# 
+# Copyright Vertica, an HP Company 2012 
+# All rights reserved 
+# 
+# Description: restart agent
+
+SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
+
+. $SCRIPT_DIR/mod_utils
+
+
+#
+# default
+#
+ipaddrs=()
+ROOT_PEM=""
+hostlist=""
+
+
+usage(){
+        cat <<EOF
+        restart_agent -h <host list> -k <root pem file>
+EOF
+exit 1
+}
+
+
+
+
+process_args_no_license $*
+
+build_ip_addr_list
+
+for ip in ${ipaddrs[@]}; do
+	ssh -i $ROOT_PEM root@$ip "/etc/init.d/vertica_agent restart"
+done
+
+exit 0

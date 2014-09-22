@@ -1,0 +1,5 @@
+NumberOfPasswordPrompts 0 
+StrictHostKeyChecking no
+UserKnownHostsFile /dev/null
+HashKnownHosts no
+LogLevel quiet

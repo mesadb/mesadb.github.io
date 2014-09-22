@@ -1,0 +1,37 @@
+#!/bin/bash 
+# 
+#
+# Description: stop agent
+
+SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
+
+. $SCRIPT_DIR/mod_utils
+
+
+#
+# default
+#
+ipaddrs=()
+ROOT_PEM=""
+hostlist=""
+
+
+usage(){
+        cat <<EOF
+        agent_stop -h <host list> -k <root pem file>
+EOF
+exit 1
+}
+
+
+
+
+process_args $*
+# collect ip address infos to stop an agent on the target instance
+build_ip_addr_list
+
+for ip in ${ipaddrs[@]}; do
+	ssh -i $ROOT_PEM root@$ip "/etc/init.d/mesadb_agent stop"
+done
+
+exit 0

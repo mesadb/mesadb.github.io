@@ -1,0 +1,1183 @@
+#!/bin/bash
+# 
+# Copyright Vertica, an HP Company 2012 
+# All rights reserved 
+# 
+# Description: check vertica presence
+
+if [ -e "./ssh_config" ];then
+     SSH_ARGS=(-F ./ssh_config)
+fi
+
+finalreturncode=0
+OS=redhat
+#
+# Determine our OS
+#
+
+[ -f /etc/redhat-release ] && OS=redhat
+[ -f /etc/SuSE-release ] && OS=suse
+[ -f /etc/debian_version ] && OS=debian
+
+
+function info
+{
+    # $1: test title; $2: msg; $3: code 
+    echo "Test: $1 : INFO $3: $2"
+}
+
+function warn
+{
+# $1: test title; $2: msg; $3: code 
+    echo "Test: $1 : WARN $3: $2"
+}
+
+
+function error 
+{
+    retcode=$3
+    # $1: test title; $2: msg; $3: code 
+    echo "Test: $1 : ERROR $3: $2"
+    (( finalreturncode = finalreturncode + retcode ))
+#    if [ -n $2 ];then
+#        exit $2
+#    fi
+}
+
+function v_bin
+{
+    which $1 1>/dev/null 2>&1
+    if [ $? -ne 0 ];then
+        error  "validating binary $1 is available" "you need binary $1 to use this script" 1
+        return 1
+    fi
+}
+
+#
+# v_need_sudo
+# return 0 if sudo access is avaiable
+# return 1 if not
+#
+function v_need_sudo
+{
+    sudo -n ls / 1>/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+         error "validating root previlege" "you must have sudo access. try sudo -v and try again" 2 
+        return 2
+    fi
+}
+
+
+
+#
+# vping host
+# return 0   - success
+# return >0  -failure
+
+function v_ping
+{
+    local host=$1
+    if [ -z $host ];then
+        error "usage: vping host" 
+        exit 1
+    fi
+    ping -c 1 -W 1 ${host} 1>/dev/null 2>&1
+    ret=$?
+    if [ $ret -ne 0 ]; then
+       error "validating host $host" "could not ping $host" 3 
+       return 3
+    else
+       info "validating host $host" "successfully pinged $host" 
+    fi
+}
+
+#
+# v_ssh host key
+# return 0 if ssh connect successfully
+# return >0 if failed
+
+function v_ssh
+{
+    local host=$1
+    local pemfile=$2
+
+    if [ -z "${host}"  ]; then
+        error "usage: vssh host keyfile" 
+        exit 1
+    fi
+    if [ -z "${pemfile}"  ]; then
+        error "usage: vssh host keyfile" 
+        exit 1
+    fi
+    if [ ! -e "${pemfile}"  ]; then
+        error "validating SSH" "cannot access file: ${pemfile}" 1 
+        exit 1
+    fi
+ 
+    ssh -n ${SSH_ARGS[@]}  -o ConnectTimeout=1 -i ${pemfile}  ${host} " " 1>/dev/null 
+    ret=$?
+    if [ $ret -ne 0 ]; then
+        error "validating SSH" "could not connect to ${host} using identity file ${pemfile}" 4 
+        return 4
+    else
+        info "validating SSH" "connected to ${host} using identity file ${pemfile}" 
+    fi    
+}
+
+#
+# v_tcp_port_available port
+# return 0 if nothing is listening on server port
+# return 1 if port is in use
+
+function v_tcp_port_available
+{
+    local port=$1
+
+    if [ -z "${port}"  ]; then
+        error "usage: v_port_available port"
+        exit 1 
+    fi
+
+    netstat --listening --tcp -n | grep :"$port[[:space:]]" >/dev/null
+    if [ $? -eq 0 ]; then
+        error "validating tcp port ${port}" "tcp server port $port is in use" 5 
+        return 5
+    fi
+    info "validating tcp port ${port}" "tcp server port $port is available"  
+}
+
+
+
+#
+# v_udp_port_available port
+# return 0 if nothing is listening on server port
+# return 1 if port is in use
+
+function v_udp_port_available
+{
+    local port=$1
+
+    if [ -z "${port}"  ]; then
+        error "usage: v_port_available port" 
+        exit 1
+    fi
+
+    netstat --listening --udp -n | grep :"$port[[:space:]]" >/dev/null
+    if [ $? -eq 0 ]; then
+        error "validating udp port ${port}" "udp server port $port is in use" 6 
+        return 6
+    fi
+   
+    info "validating udp port ${port}" "udp server port $port is available"  
+}
+
+#
+# v_port_available port
+# return 0 is both tcp and udp server port is avaialble to bind to
+# return 1 if either tcp or udp server port is availble
+# return 2 if niether is available
+
+
+function v_port_available
+{
+    local port=$1
+    if [ -z "${port}"  ]; then
+        error "usage: v_port_available port"
+        exit 1
+    fi
+
+    v_udp_port_available ${port}
+    v1=$?
+    v_tcp_port_available ${port}
+    v2=$?
+    (( v3 = v1 + v2 ))
+    return $v3
+}
+
+#
+# v_user_runs_zombies username
+# return 0 if user own no zombie processes
+# return 1 if user own at least one zombie process
+#
+
+function v_check_zombies
+{
+    local comm=$1
+    if [ -z "${comm}"  ]; then
+        error "usage: v_check_zombies processname"
+        exit 1
+    fi
+
+   
+
+    ps -e -o state,comm | grep "Z ${comm} <defunct>"
+    if [ $? -eq 0 ]; then
+        error "validating zombie processes ${comm}" "zombie process ${comm} <defunct> needs to be terminated"  7 
+        return 7
+    fi
+   
+    info "validating zombie processes ${comm}" "no critical zombie processes found"  1  
+}
+
+# v_available_pty num
+# returns 0 if the number of available pty connections is greater or equal to num
+# else returns 1 
+#
+
+function v_available_pty
+{
+    local n_available=$1
+    if [ -z "${n_available}"  ]; then
+        error "usage: v_available_pty number" 
+        exit 1
+    fi
+
+
+    max=$(cat /proc/sys/kernel/pty/max )
+    inuse=$(cat /proc/sys/kernel/pty/nr )
+   
+    (( available = max - inuse ))
+    
+    if [ "${available}" -lt "${n_available}" ];then
+        # making this a warning, there is a kernel bug after 2.6.28 where nr is never decremented 
+        warn "validating available pty ${available}" "Not enough pseudo terminals available ${available} < ${n_available}"  8  
+        return 8
+    fi
+    
+    info "validating available pty ${available}" "Adequate pseudo terminals available ${available} > ${n_available}"  8 
+}
+
+
+function v_is_process_running_simple
+{
+    local process_name=$1
+    if [ -z "${process_name}"  ]; then
+        error "usage: v_is_process_running process_name" 
+        exit 1
+    fi
+    ps -eo comm,pid  | grep "${process_name} "  >/dev/null 2>&1
+    if [ $? -eq 0 ];then
+        error "validating process ${process_name} is not running" "Process ${process_name} is running" 9 
+        ps -e -o comm,pid  | grep "${process_name} " | sed "s/^/\\t/"
+        return 9
+    fi
+    info "validating process ${process_name} is not running" "Process ${process_name} is not running"  
+}
+
+function v_is_process_running
+{
+    local process_name=$1
+    local use_args=$2
+    local ps_args="comm,pid"
+    if [ -z "${process_name}"  ]; then
+        error "usage: v_is_process_running process_name"
+        exit 1
+    fi
+    if [ "${use_args}"  ]; then
+        ps_args="comm,pid,args"
+    fi
+
+    ps -eo $ps_args  | grep "${process_name} "  >/dev/null 2>&1
+    if [ $? -eq 0 ];then
+        error "validating ${process_name} is not running" "Process ${process_name} is running" 9 
+        ps -e -o $ps_args  | grep "${process_name} " | sed "s/^/\\t/"
+        return 9
+    fi
+    info "validating ${process_name} is not running" "Process ${process_name} is not running" 
+}
+
+
+
+
+function v_does_running_process_have_args
+{
+    local process_args=$1
+    if [ -z "${process_args}"  ]; then
+        error "usage:  v_does_running_process_have_args  process_args" 
+        exit 1
+    fi
+    pgrep -f ${process_args}   >/dev/null 2>&1
+    if [ $? -eq 0 ];then
+        error "validating running processes with args ${process_args}" "Process with args ${process_args} is running" 9 
+        pgrep -l -f ${process_args} 
+        return 9
+    fi
+    info "validating running processes with args ${process_args}" "Process with args ${process_args} is not running"  
+}
+
+
+
+function v_is_rpm_installed
+{
+    local rpm_name=$1
+    local install_type="rpm"
+
+    if [ -z "${rpm_name}"  ]; then
+        error "usage: v_is_rpm_installed rpm_name" 
+        exit 1
+    fi
+    if [ "$OS" == "redhat" -o "$OS" == "suse" ]; then
+        rpm -q ${rpm_name}   >/dev/null 2>&1
+    elif [ "$OS" ==  "debian" ]; then
+        install_type="package"
+        dpkg-query -L ${rpm_name} >/dev/null 2>&1
+    fi
+
+    if [ $? -eq 0 ];then
+        error "validating ${rpm_name} ${install_type} installation" "${rpm_name} ${install_type} is installed" 10
+        return 10
+    fi
+
+    info "validating ${rpm_name} ${install_type} installation" "${rpm_name} ${install_type} is not installed" 
+}
+
+
+
+
+
+
+
+function v_bin_error
+{
+    which $1 1>/dev/null 2>&1
+    if [ $? -ne 0 ];then
+        return 1
+    fi;
+}
+
+function v_bin_warn
+{
+    which $1 1>/dev/null 2>&1
+    if [ $? -ne 0 ];then
+        warn  "validating binary $1 availability" "binary $1 does not exist, however it is recommended" 
+        return 0
+    fi;
+    info "validating binary $1 availability" "binary $1 exists"
+}
+
+
+
+function v_tz_check
+{
+    
+    local expected_os=${1}
+
+#    if [ -e /etc/issue ];then
+#       cat /etc/issue
+#    fi
+    actual_os=$(uname -srpmio)
+   
+    if [ -n "${expected_os}" ];then
+        if [ "${expected_os}" != "${actual_os}" ];then  
+            error "checking OS" "Operating system mismatch expected OS: ${expected_os}, actual OS ${actual_os}" 13 
+        fi
+            
+    fi
+}
+
+
+
+function v_is_process_not_running
+{
+    local process_name=$1
+    local use_args=$2
+    local ps_args="comm,pid"
+    if [ -z "${process_name}"  ]; then
+        error "usage: v_is_process_not_running process_name" 
+        exit 1
+    fi  
+    if [ "${use_args}"  ]; then
+        ps_args="comm,pid,args"
+    fi  
+
+    ps -eo $ps_args  | grep "${process_name} "  >/dev/null 2>&1
+    if [ $? -ne 0 ];then
+        if [ ${process_name} == "ntpd" ]; then
+            warn "validating process ${process_name} is running" "Process ${process_name} is not running" 0
+            return 0
+        else 
+            error "validating process ${process_name} is running" "Process ${process_name} is not running" 14 
+            return 14
+        fi
+    fi  
+    info "validating process ${process_name} is running" "Process ${process_name} is running" 
+}
+
+
+function v_is_rpm_not_installed
+{
+    local rpm_name=$1
+    local install_type="rpm"
+
+    if [ -z "${rpm_name}"  ]; then
+        error "usage: v_is_rpm_installed rpm_name"
+        exit 1
+    fi
+
+    if [ "$OS" == "redhat" -o "$OS" == "suse" ]; then
+        rpm -q ${rpm_name}   >/dev/null 2>&1
+    elif [ "$OS" ==  "debian" ]; then
+        install_type="package"
+        dpkg-query -L ${rpm_name} >/dev/null 2>&1
+    fi
+
+    if [ $? -ne 0 ];then
+        warn "validating ${rpm_name} ${install_type} " "${rpm_name} ${install_type} is not installed"
+        return 10
+    fi
+    info "validating ${rpm_name} ${install_type} " "${rpm_name} ${install_type} installed"
+}
+
+
+
+function v_check_env_var
+{
+    varname=${1}
+    eval local actual_value=\$$1
+    local expected_value=${2}
+    
+    if [ -z "$actual_value" ];then
+        warn "checking environmental variable ${1}" "enviornment variable ${1} is not set" 17 
+        return 17
+    else
+        info "checking environmental variables ${1}" "enviornment variable ${1}=${actual_value}" 
+    fi
+
+    if [ -n "${expected_value}" ];then
+        if [ ${expected_value} != ${actual_value} ];then
+            error "checking environmental variable ${varname}" "enviornment variable ${varname} is not set correctly. expected ${expected_value}, actual ${actual_value}" 18 
+            return 18
+        fi
+    fi
+}
+
+
+function v_check_user_dir 
+{
+    local v_user=$1
+    local v_user_dir=$2
+
+    if [ -z "${v_user}" ]; then
+       error "Validating Vertica user" "Vertica user must be provided. Please use -u argument" 1
+       exit 1
+    fi
+
+    if [ -z "${v_user_dir}" ]; then
+       error "Validating Vertica user" "Vertica user Admin Path must be provided.  Please use -f argument" 1
+       exit 1
+    fi
+
+    id ${v_user} 1>/dev/null 2>&1
+#
+#   if user does not exist, then the directory must not exist
+#
+    if [ $? -ne 0 ]; then
+       if [ -e "$v_user_dir" ]; then
+          error "Validating Vertica user " "The Vertica Admin Path $v_user_dir provided already exists.  Please select a directory that does not exist" 6
+          return 6
+       else
+          v_dir_name=$(dirname $v_user_dir)
+          if [ ! -e "$v_dir_name" ]; then
+             error "Validating Vertica user " "The directory ${v_dir_name} does not exist.  Please create this directory so Vertica user: ${v_user} can be created." 6
+             return 6
+          fi
+#          add_error=$( { useradd -d $v_user_dir -m -s /bin/bash $v_user >/dev/null; } 2>&1 )
+#          if [ $? -ne 0 ]; then
+#            error "Validating Vertica user" "The following error occurred:  ${add_error}" 6
+#            return 6
+#          else
+#            info "Validating Vertica user " "The Vertica user:  ${v_user}   and the Vertica Admin Path: ${v_user_dir} was created successfully."
+#            return
+#          fi
+       fi 
+    else
+       if [ -e "$v_user_dir" ]; then
+          real_dir=`eval "echo ~$v_user"`
+          if [ "${real_dir}" != "${v_user_dir}" ]; then
+             error "Validating Vertica user " "The Vertica Admin Path provided ${v_user_dir} does not match ${real_dir}.  Please select the home directory for the user ${v_user}" 6
+             return 6
+          fi
+       else
+          error "Validating Vertica user " "The Vertica Admin Path provided ${v_user_dir} does not exist.  Please select the home directory for the user ${v_user}" 6
+          return 6
+       fi
+    fi
+
+    info "Validating Vertica user " "The Vertica user:  ${v_user}   and the Vertica Admin Path: ${v_user_dir} are valid" 
+
+
+}
+
+
+
+
+
+
+
+function v_is_disk_space_adequate
+{
+    local disk_space_required=${1}
+    local location=${2}
+    if [ -z "${disk_space_required}"  ]; then
+        error "usage: v_is_disk_space_adequate space_needed location" 
+        exit 1
+    fi
+    if [ -z "${location}"  ]; then
+        error "usage: v_is_disk_space_adequate space_needed location" 
+        exit 1
+    fi
+
+    disk_space_available=$(df -P ${location} | tail -1 | awk '{print $4'} )
+    if [ ${disk_space_available} -lt  ${disk_space_required} ];then
+        error "validating disk space at ${location}" "not enough disk space available for ${location}. ${disk_space_available} < ${disk_space_required}" 11 
+        return 11
+    fi
+    info "validating disk space at ${location}" "Adequate disk space available for ${location}. ${disk_space_available} > ${disk_space_required}" 
+}
+
+function v_logrotate
+{
+
+    if [ -d /etc/logrotate.d ];then
+        info "/etc/logrotate.d exists" "validating /etc/logrotate.d exists"
+    else
+        error "validating /etc/logrotate.d exists" "/etc/logrotate.d does not exist" 12 
+        return 12
+    fi
+}
+
+function v_echo_os
+{
+    
+    local expected_kernel=${1}
+    local expected_os="${2}"
+
+    if [ -e /etc/issue ];then
+       actual_os=$(md5sum /etc/issue | awk '{print $1}')
+    fi
+    actual_kernel=$(uname -srpmio)
+  
+    if [ -n "${expected_kernel}" ];then
+        if [ "${expected_kernel}" != "${actual_kernel}" ];then  
+            error "validating Linux kernel" "Operating system mismatch expected kernel: ${expected_kernel}, actual kernel ${actual_kernel}." 13 
+        fi
+    else
+        info "validating Linux kernel" "Linux Kernel:  ${actual_kernel}" 
+    fi
+
+
+    if [ -n "${expected_os}" ];then
+        if [ "${expected_os}" != "${actual_os}" ];then  
+            error "validating Linux kernel" "Operating system (md5sum /etc/issue) mismatch expected OS: ${expected_os}, actual OS ${actual_os}." 14 
+            error "Linux OS /etc/issues: `cat /etc/issue`"
+        fi
+    else
+        info "validating Linux kernel" "Linux OS (md5sum /etc/issue):  ${actual_os}" 
+        info "validating Linux kernel" "Linux OS (OSName /etc/issue): `cat /etc/issue`" 
+    fi
+
+
+
+}
+
+
+
+function v_need_root
+{
+   id=$(id -u)
+   if [ ${id} -ne 0 ];then
+        error "validating root privilege" "only root can run this script" 127 
+        exit 127
+   fi
+}
+
+function v_check_cpu_perf
+{
+	info "checking CPU performance" "running cpu_perf, this may take some time" 
+	vcpuperf -q 
+}
+
+function v_check_mem_perf
+{
+	info "checking memory performance" "running mem_perf, this may take some time" 
+	mem_perf -q 
+}
+
+
+
+
+
+
+
+
+
+function v_check_eths
+{
+
+ACTIVE_NICS=`/sbin/ifconfig | sed 's/^ /#/' | awk '/^[^#]/{print $1}'`
+idx=0
+for nic in $ACTIVE_NICS; do
+      let idx=$idx+1
+      NIC_JSON="{name:$nic,"
+      IP_INFO=`/sbin/ifconfig $nic | sed '/.*addr.*Bcast.*/ ! d' | sed 's/inet addr/ipaddr/' | sed 's/Bcast/broadcast/' | sed 's/Mask/netmask/'`
+      NIC_CONFIG=`/sbin/ethtool $nic 2>/dev/null | grep "Speed:" | sed 's/[ \t]//g' | sed 's/Speed/speed/' | sed 's/\([0-9]\+\).*/"\1"/'`
+ 
+      if [[ "$NIC_CONFIG" =~ "Unknown" ]]; then
+         NIC_CONFIG="speed:unknown"
+      fi
+ 
+      if [ "$nic" == "lo" ]; then
+          IP_INFO="ipaddr:127.0.0.1 broadcast:255.255.255.255 netmask:255.0.0.0"
+          NIC_CONFIG="speed:locallink"
+      fi;
+ 
+      if [ "$NIC_CONFIG" == "" ]; then
+         NIC_CONFIG="speed:unknown"
+      fi;
+ 
+      if [ "$IP_INFO" == "" ]; then
+            IP_INFO="ipaddr: broadcast: netmask:"
+      fi;
+ 
+      NIC_JSON="$NIC_JSON $NIC_CONFIG,"
+      idp=0
+      for b in $IP_INFO; do
+         if [ $idp -gt 0 ]; then
+            NIC_JSON="${NIC_JSON},"
+         fi;
+         let idp=$idp+1
+         addr=`echo "$b" | awk -F: '{print "",$1,":",$2,""}' | sed 's/ //g'`
+         NIC_JSON="${NIC_JSON} $addr"
+      done;
+      NIC_JSON="${NIC_JSON} }"
+      info "checking ethernet" "Network Interface Card: $NIC_JSON" 
+ done;
+
+
+}
+
+function v_check_io_perf
+{
+	if [ $# -lt 2 ];then
+	       error "usage: v_check_io_perf duration dirs"
+	       exit 1
+    fi
+
+    local per_test_duration="${1}" #in seconds
+    shift
+    ### 4 tests * # of directories * # duration of each test
+    local total_duration=$(( 4 * ${#} * ${per_test_duration} ))
+
+    info "checking IO performance" "running io_perf, this may take some time (approx ${total_duration} seconds)" 
+
+	for dir in ${*}
+	do
+		if [ -d "$dir" ];then
+				actualdirs="${actualdirs} ${dir}"
+		else
+			echo "{ \"warn\" : \"$dir does not exist, skipping io_perf test on this directory\" }"
+		fi
+	done
+	if [ -n "$actualdirs" ];then
+	    vioperf --duration="${total_duration} s"   --log-interval="${per_test_duration} s" --log-file=/tmp/io_perf.$HOSTNAME.log  --condense-log ${actualdirs} 1>/dev/null 
+            cat /tmp/io_perf.$HOSTNAME.log
+	fi
+
+		
+}
+
+
+function v_check_user_and_group
+{
+   local  user=${1}
+   local  group=${2}
+    
+   if [ -z "$user" ]; then  
+    warn "validating user" "user name is required" 1
+    return 1
+   fi
+   if [ -z "$group" ]; then  
+    warn "validating group" "group name is required" 1 
+    return 1
+   fi
+
+    id ${user} 1>/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        warn   "validating user" "User $user does not exit" 3
+        return 3
+    fi
+
+    # the groups the user is part of
+    groups=$(id $user 2>/dev/null | sed "s/\(.*\) groups=\(.*\)/\2/g")
+
+    # the current effective group id
+    effgid=$(id -g $user)
+
+    if [[ "${groups}" = *$group* ]]; then
+        info "user $user belongs to group $group"
+    else
+        warn "validating user" "user $user does not belong to group $group" 4
+    fi
+
+    effectivegroup="$effgid($group)"   
+ 
+    if [[ "${groups}" = *${effectivegroup}* ]]; then
+        info "validating user" "user $user effective group is $group"
+    else
+        warn "validatin user" "user $user effective group is not $group" 5
+    fi
+}
+
+function v_check_file_owner_permissions
+{
+    
+   local  file=${1}
+   local  expected_owner=${2}
+   local expected_permissions=${3}
+   errorTitle="validating owner"
+   if [ -z "$file" ]; then  
+    warn $errorTitle "file name is required" 1
+    return 1
+   fi
+
+   if [ ! -e "$file" ]; then
+    warn $errorTitle "file $file does not exist" 6
+    return 1
+   fi
+
+   if [ -z "$expected_owner" ]; then  
+    warn $errorTitle "owner  is required" 1 1
+    return 1
+   fi
+
+    current_owner=$(stat -c %U:%G ${file} )
+    current_permissions=$(stat -c %a ${file} )
+   
+    if [ "${current_owner}"  == "${expected_owner}" ]; then
+        info $errorTitle "file $file has owner ${current_owner}"
+    else
+        warn $errorTitle "file $file expected owner ${expected_owner} does not match curernt owner ${current_owner}" 7
+    fi
+
+    
+    # user provided expected permissions, check for that too
+    if [ -n "${expected_permissions}" ]; then
+       if [ "${current_permissions}"  == "${expected_permissions}" ]; then
+            info $errorTitle "file $file has permissions ${current_permissions}"
+        else
+            warn $errorTitle "file $file expected permissions ${expected_permissions} does not match current permissions ${current_permissions}" 8
+        fi
+
+    fi
+
+}
+
+
+
+
+
+function validate_vertica_presence
+{
+
+    v_bin ping
+    v_bin netstat
+    v_bin ps
+    v_bin ssh
+    v_bin sudo
+    v_bin cat
+    v_bin grep
+    v_bin wc
+    v_bin sed
+    v_bin pgrep
+
+
+    #
+    v_is_rpm_installed vertica
+    v_is_rpm_installed vertica-ce
+    v_is_rpm_installed vertica-R-lang
+
+
+    #
+    v_check_zombies vertica
+    #
+    v_available_pty      $pty
+
+    IFS=","
+    for port in $ports
+    do
+    #
+        v_port_available $port
+    done
+    IFS=""
+
+#
+    v_is_process_running_simple vertica
+    v_is_process_running_simple spread 
+    v_is_process_running_simple admintools 
+    v_is_process_running_simple vertica-udx-zyg 
+    v_is_process_running_simple agent.sh
+    v_does_running_process_have_args /opt/vertica/mcdb/derby
+    v_does_running_process_have_args simply_fast.py
+
+}
+
+
+# This function doesn't include RPM installation validation.
+# The rest is the same as validate_vertica_presence
+function validate_vertica_presence_lite
+{
+
+    v_bin ping
+    v_bin netstat
+    v_bin ps
+    v_bin ssh
+    v_bin sudo
+    v_bin cat
+    v_bin grep
+    v_bin wc
+    v_bin sed
+    v_bin pgrep
+
+
+    #
+    v_check_zombies vertica
+    #
+    v_available_pty      $pty
+
+    IFS=","
+    for port in $ports
+    do
+    #
+        v_port_available $port
+    done
+    IFS=""
+
+#
+    v_is_process_running_simple vertica
+    v_is_process_running_simple spread 
+    v_is_process_running_simple admintools 
+    v_is_process_running_simple vertica-udx-zyg 
+    v_is_process_running_simple agent.sh
+    v_does_running_process_have_args /opt/vertica/mcdb/derby
+    v_does_running_process_have_args simply_fast.py
+
+}
+
+
+
+function get_vertica_version
+{	
+
+    if [ "$OS" == "redhat" -o "$OS" == "suse" ]; then
+        rpm_name=`rpm -qa | grep vertica | grep -v console 2>/dev/null`;
+	if [ -n "$rpm_name" ]; then
+	    echo `rpm -q --qf %{VERSION}-%{RELEASE} $rpm_name`
+	else
+	    exit 1;	    
+	fi
+	
+    elif [ "$OS" ==  "debian" ]; then
+	dpkg_name=`dpkg -l | grep vertica | grep -v console 2>/dev/null`;
+	if [ -n "$dpkg_name" ]; then
+            echo `dpkg-query -W  -f='${Version}' vertica`;
+        else
+	    exit 1;
+	fi
+    fi
+}
+
+
+
+
+function validate_vertica_requirements
+{
+
+    v_check_user_dir ${v_superuser} ${v_superuser_dir}
+    v_is_process_not_running ntpd
+    v_bin openssl
+    v_check_env_var TZ  ${tz}
+    v_check_env_var LANG  ${locale}
+    v_is_process_running dhclient 
+}
+
+
+function validate_os_disk_space
+{
+
+    v_bin ping
+    v_bin sudo
+    v_bin cat
+    v_bin awk
+    v_bin uname
+    v_bin df
+    v_bin tail
+    v_bin md5sum
+
+    v_echo_os "${expected_kernel}" "${expected_os}"
+
+    IFS=","
+    for host in $hosts
+    do
+        v_ping $host
+    done
+
+    #
+    #   Check log rotate 
+    #
+    v_logrotate
+
+    #
+    #   Check Disk space
+    #
+    if [ -z "${disks}"  ]; then
+        disks="/opt,/tmp"
+    fi
+    if [ -z "${disk_size}"  ]; then
+        #1 GB available 
+        disk_size=1048576
+    fi
+
+    for disk in $disks
+    do
+        v_is_disk_space_adequate  $disk_size $disk
+    done
+
+    IFS=""
+}
+
+function  validate_cpu_requirements
+{
+    echo $PATH
+    v_bin vcpuperf
+    if [ $? -eq 0 ];then
+	    v_check_cpu_perf ${dir}
+    fi
+}
+
+
+function  validate_disk_requirements
+{
+    v_bin cat
+    v_bin /sbin/ifconfig
+    v_bin_warn /sbin/ethtool
+    v_need_root
+
+    v_check_eths
+
+    v_bin vioperf
+
+    if [ $? -eq 0 -a -n "${dirs}"  ];then
+	    v_check_io_perf "${duration}" ${dirs//,/ }
+    fi
+}
+
+
+function post_vertica_install_validation
+{
+
+v_bin id
+v_bin stat
+v_check_user_and_group ${v_superuser} ${v_superuser_group}
+
+
+IFS=","
+for file_permission in $file_permission_s
+do
+    #before the colon
+    file=${file_permission%:*}
+    #after to colon
+    if [[ "$file_permission" =~ [:] ]]; then
+        permission=${file_permission#*:}
+    fi
+
+    v_check_file_owner_permissions ${file} ${v_superuser}:${v_superuser_group} ${permission}
+done
+}
+
+
+
+function is_rpm_installed
+{
+    if [ "$OS" == "redhat" -o "$OS" == "suse" ]; then
+        rpm -q vertica   >/dev/null 2>&1
+    elif [ "$OS" ==  "debian" ]; then
+        dpkg-query -L vertica >/dev/null 2>&1
+    fi
+
+    if [ $? -eq 0 ];then
+        echo "true"
+    else
+	exit 1;
+    fi
+}
+
+
+
+function get_uploaded_version
+{
+    if [ "$OS" == "redhat" -o "$OS" == "suse" ]; then
+        echo `rpm -qp --qf %{VERSION}-%{RELEASE} ${file_path}`;
+	
+    elif [ "$OS" ==  "debian" ]; then
+	echo `dpkg -f  ${file_path} Version`;
+    fi
+}
+
+
+function is_vertica_installed
+{
+    adminconf="/opt/vertica/config/admintools.conf";
+    if [ -e "${adminconf}" ]; then
+	echo "true";
+    else
+	exit 1;
+    fi
+}
+
+
+
+function usage
+{
+    cat << EOF
+    usage $0: [-V|-R|-O|-K|-C|-D|-I ]  [optional args] 
+        e.g. $0 -V -t 100 -p 5432,5431,5430
+        e.g. $0 -VROKCDI
+
+    -V validate vertica presence
+        optional arguments
+         -t psuedo-terminals needed: default 100
+         -p ports: default 5432
+         -h help, this message
+        Validates
+          1. user does not own zombie processes
+          2. said number of pseudo terminals are available
+          3. listed ports are available
+
+    -R  validate_vertica_requirements 
+        optional arguments
+         -z timezone: expected timezone
+         -l locale: expected locale
+         -u vertica superuser
+         -f vertica superuser home directory
+        validates
+          1. ntpd is running
+          2. pstack is available
+          3. sysstat is installed
+          4. selinux is disabled
+          5. timezone is set
+          6. locale is set
+          7. dhcp client is running, which indicates you may have dhcp ip addr
+          8. firewall is disabled
+          9. validates if the superuser exists, then the home directory (Vertica Admin Path) provided must match
+         10. validates if the superuser does not exist, then the home directory (Vertica Admin Path) provided must not exist.
+
+    -O validate os and disk space
+        optional arguments
+         -s hosts: resolv and ping hosts
+         -k expected kernel: expected output of the command uname -srpmio
+         -o expected OS: md5sum  /etc/issue
+         -d disks,dirs: Given the disk/dirs list, validate the disk space based on -m option (default: /opt,/tmp)
+         -m disk_size:  size of disk space to check against in k bytes (default: 1048576)
+        validates
+          1. resolves and pings hosts
+          2. checks existence of /etc/logrotate.d
+          3. checks adequate disk space for given directories:  default: /opt/vertica and /tmp
+          4. validates OS is expected
+
+     -C validate cpu requirements
+        optional arguments
+         -P additional path, this gets appended to path so that additional binaries may be used
+        validates
+    	  1. cpu performance
+	      2. memory performance
+
+     -D validate disk requirements 
+       optional arguments
+        -u dbadmin user, default (* all users on the system)
+		-P additional path, this gets appended to path so that additional binaries may be used
+        -d directorys to run io perf on
+        -T number of seconds (duration) that io_perf will run on each directory.  ie. -t 30
+       validates
+         1. readahead for each disk
+		 2. check io scheduler
+		 3. check network interfaces
+		 4. check io performance
+
+    -I post vertica install validation 
+       optional arguments
+        -u vertica dbadmin  [dbadmin]
+        -g vertica dbadmin group [verticadba]
+        -M file:permission 
+       validates
+         1. check if user exists
+         2. check if user is part of group specified
+         3. check if users effective group is correct
+         4. check file ownership and permissions
+EOF
+exit 1 
+}
+
+
+### some defauls
+
+fix=false
+pty=100
+ports=5432,5433,5434
+path=/opt/vertica/bin
+v_superuser=dbadmin
+v_superuser_group=verticadba
+v_superuser_dir=/home/dbadmin
+file_permission_s=/opt/vertica/config:775,/opt/vertica/config/share:775,/opt/vertica/log:775,/opt/vertica/config:775,/opt/vertica/config/share:775,/opt/vertica/log:775,/opt/vertica/config/share/agent.key:400,/opt/vertica/config/share/agent.cert:400,/opt/vertica/config/share/agent.pem:400,/opt/vertica/config/share/license.key:660,/opt/vertica/config/admintools.conf:664
+
+
+if [ $# -eq 0 ] ; then
+    usage
+fi
+
+while getopts "X:F:t:p:z:l:u:f:s:k:o:d:m:P:T:g:M:H:hVROKCDIvabc" flag
+do
+    case $flag in
+    t) pty=${OPTARG};; 
+    p) ports=${OPTARG} ;;
+    F) vfunctions=${OPTARG};;
+    X) fix=true ;;
+    z) tz=${OPTARG} ;;
+    l) locale=${OPTARG} ;;
+    u) v_superuser=${OPTARG} ;;
+    f) v_superuser_dir=${OPTARG} ;;
+    s) hosts=${OPTARG} ;;
+    k) expected_kernel=${OPTARG} ;;
+    o) expected_os=${OPTARG} ;;
+    d) disks=${OPTARG}; dirs=${OPTARG} ;;
+    m) disk_size=${OPTARG} ;;
+    P) path=${OPTARG};;
+    T) duration=${OPTARG} ;;
+    g) v_superuser_group=${OPTARG} ;;
+    M) file_permission_s=${OPTARG};;
+    H) file_path=${OPTARG};;
+    V) vfunctions="${vfunctions},validate_vertica_presence";;
+    L) vfunctions="${vfunctions},validate_vertica_presence_lite";;
+    R) vfunctions="${vfunctions},validate_vertica_requirements";;
+    O) vfunctions="${vfunctions},validate_os_disk_space";;
+    C) vfunctions="${vfunctions},validate_cpu_requirements";;
+    D) vfunctions="${vfunctions},validate_disk_requirements";;
+    I) vfunctions="${vfunctions},post_vertica_install_validation";;
+    v) vfunctions="${vfunctions},get_vertica_version";;
+    a) vfunctions="${vfunctions},get_uploaded_version";;
+    b) vfunctions="${vfunctions},is_rpm_installed";;
+    c) vfunctions="${vfunctions},is_vertica_installed";;
+    h) usage;;
+    *) usage;;
+    esac
+done
+shift $((OPTIND-1))
+duration="30" #in seconds
+IFS=","
+export PATH=$PATH:$path
+for func in ${vfunctions}
+do
+    (unset IFS; ${func})
+done
+
+exit $finalreturncode
+

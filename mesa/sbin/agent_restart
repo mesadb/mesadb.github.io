@@ -1,0 +1,40 @@
+#!/bin/bash 
+# 
+#
+# Description: restart agent
+
+SCRIPT_DIR="$(cd "$( dirname "$0")" && pwd)"
+
+. $SCRIPT_DIR/mod_utils
+
+
+#
+# default
+#
+ipaddrs=()
+ROOT_PEM=""
+hostlist=""
+
+
+usage(){
+        cat <<EOF
+        agent_restart -h <host list> -k <root pem file>
+EOF
+exit 1
+}
+
+
+
+
+process_args $*
+# generate the IP address list of mesadb instances
+build_ip_addr_list
+# iterate the IP list to start an agent on individual IP.
+for ip in ${ipaddrs[@]}; do
+    
+    message 4 60 "Start agent on $ip"
+   	ssh ${SSH_ARGS[@]} -i $ROOT_PEM root@$ip "/etc/init.d/mesadb_agent restart"
+    if [ $? -ne 0 ]; then
+        message 1 61 "failed to restart agent in $ip"
+    fi
+done
